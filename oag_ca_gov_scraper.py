@@ -587,6 +587,11 @@ def main():
     start_time = time.time()
     urls_processed = 0
     
+    # Create a new Excel workbook and add a sheet using openpyxl instead of xlwt
+    workbook = openpyxl.Workbook()
+    main_sheet = workbook.active
+    main_sheet.title = "Main Data"
+
     # Process in batches as before
     for batch_num in range(num_batches):
         start_idx = batch_num * BATCH_SIZE
@@ -787,10 +792,6 @@ def main():
     if 'link' in all_headers_by_category['data']:
         all_headers_by_category['data'].remove('link')
 
-    # Create a new Excel workbook and add a sheet using openpyxl instead of xlwt
-    workbook = openpyxl.Workbook()
-    main_sheet = workbook.active
-    main_sheet.title = "Main Data"
     # Write all data to sheet
     write_data_to_sheet_with_all_headers(main_sheet, all_data, all_headers_by_category)
 
