@@ -334,6 +334,30 @@ def write_data_to_sheet_with_all_headers(sheet, all_data, all_headers_by_categor
 
 # Update the main function to handle TSV files
 def main():
+    """
+    Main function to execute the OAG CA Gov scraper.
+    This function sets up logging, processes input files or URLs, and scrapes data from the provided URLs.
+    It supports reading URLs from Excel (.xls, .xlsx) or TSV (.tsv, .txt) files, or using a hardcoded list of URLs.
+    The scraped data is then saved to an Excel file.
+    The function performs the following steps:
+    1. Sets up logging to a file with a timestamped filename.
+    2. Logs the start of the scraping process.
+    3. Checks if an input file is provided as an argument and reads URLs from the file if it exists.
+    4. If no input file is provided, it uses a generated list of URLs or a hardcoded list of URLs.
+    5. Defines helper functions to extract data from the HTML content.
+    6. Collects data from all URLs, with retry mechanisms for failed URLs.
+    7. Processes URLs in batches to prevent memory issues.
+    8. Logs progress and saves intermediate results after each batch.
+    9. Logs a summary of the results, including any failed URLs.
+    10. Writes the scraped data to an Excel file.
+    Note:
+    - The function uses BeautifulSoup for HTML parsing.
+    - The function handles special cases for extracting specific fields like Non-Contingent Civil Penalty, Address, and Email Address.
+    - The function supports extracting data from sections like Civil Complaint, Settlement, and Judgment.
+    - The function includes a retry mechanism for failed URL fetch attempts.
+    Returns:
+        None
+    """
     # Set up logging to file
     log_filename = "scraper_errors_{}.log".format(datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
     logging.basicConfig(
