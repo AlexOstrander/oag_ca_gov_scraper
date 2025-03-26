@@ -1,19 +1,21 @@
 # Import necessary libraries
-import urllib2
+import urllib.request
+import urllib.error
 from bs4 import BeautifulSoup
-import xlwt
-import pandas as pd  # Replace xlrd with pandas
+import pandas as pd
 import re
 import sys
 import os
-# Add logging functionality
 import logging
 import datetime
 import openpyxl
 from openpyxl.utils import get_column_letter
-import time  # Add this import at the top
+import time
 import ssl
 import math  # For isinf() function
+
+# Python 3 strings are all Unicode, so no need for special handling
+# Ensure proper decoding when reading from files or network
 
 def read_urls_from_excel(excel_path, column_index=0, sheet_index=0):
     """
@@ -26,26 +28,29 @@ def read_urls_from_excel(excel_path, column_index=0, sheet_index=0):
         List of URLs
     """
     try:
-        # Read Excel file using pandas
+        # Use pandas to read the Excel file
         df = pd.read_excel(excel_path, sheet_name=sheet_index)
         
-        # Get the column name (or use the index if it's a number)
+        # Determine which column to read
         if isinstance(column_index, int):
+            if column_index >= len(df.columns):
+                return []
             column_name = df.columns[column_index]
         else:
             column_name = column_index
-            
+            if column_name not in df.columns:
+                return []
+        
         # Extract URLs from the specified column
         urls = []
         for value in df[column_name].dropna():
-            # Convert to string in case it's not already
             value_str = str(value).strip()
             if value_str.startswith("http"):
                 urls.append(value_str)
         
         return urls
     except Exception as e:
-        print("Error reading Excel file: {}".format(e))
+        print("Error reading Excel file: {}".format(str(e)))
         return []
 
 # Add a new function to read from TSV files
@@ -60,7 +65,7 @@ def read_urls_from_tsv(tsv_path, column_index=0):
     """
     try:
         urls = []
-        with open(tsv_path, 'r') as f:
+        with open(tsv_path, 'r', encoding='utf-8') as f:
             # Skip header line if present
             next(f, None)
             for line in f:
@@ -124,7 +129,7 @@ def generate_urls_for_year_range(start_year, end_year, start_ids, end_ids):
             
             for id_num in range(start_id, end_id + 1):
                 formatted_id = id_format.format(id_num)
-                url = "https://oag.ca.gov/prop65/60-Day-Notice-{}-{}".format(year, formatted_id)
+                url = f"https://oag.ca.gov/prop65/60-Day-Notice-{year}-{formatted_id}"
                 urls.append(url)
     
     return urls
@@ -332,6 +337,16 @@ def write_data_to_sheet_with_all_headers(sheet, all_data, all_headers_by_categor
         # Move to next row
         row_idx += 1
 
+# Move this function outside of main()
+def extract_value(soup, label_text):
+    """Extract value from HTML based on a label."""
+    label = soup.find("div", class_="field-label", string=lambda x: x and label_text in x)
+    if label and label.find_next_sibling():
+        sibling = label.find_next_sibling()
+        if sibling:
+            return sibling.text.strip()
+    return ""
+
 # Update the main function to handle TSV files
 def main():
     """
@@ -359,7 +374,7 @@ def main():
         None
     """
     # Set up logging to file
-    log_filename = "scraper_errors_{}.log".format(datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+    log_filename = f"scraper_errors_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     logging.basicConfig(
         filename=log_filename,
         level=logging.INFO,
@@ -375,14 +390,14 @@ def main():
         
         # Check if it's an Excel file
         if input_file.endswith(('.xls', '.xlsx')):
-            print("Reading URLs from Excel file: {}".format(input_file))
-            logging.info("Reading URLs from Excel file: {}".format(input_file))
+            print(f"Reading URLs from Excel file: {input_file}")
+            logging.info(f"Reading URLs from Excel file: {input_file}")
             urls = read_urls_from_excel(input_file)
             
         # Check if it's a TSV file
         elif input_file.endswith('.tsv') or input_file.endswith('.txt'):
-            print("Reading URLs from TSV file: {}".format(input_file))
-            logging.info("Reading URLs from TSV file: {}".format(input_file))
+            print(f"Reading URLs from TSV file: {input_file}")
+            logging.info(f"Reading URLs from TSV file: {input_file}")
             urls = read_urls_from_tsv(input_file)
             
         else:
@@ -397,8 +412,8 @@ def main():
             logging.error(error_msg)
             return
             
-        print("Found {} URLs in the input file.".format(len(urls)))
-        logging.info("Found {} URLs in the input file.".format(len(urls)))
+        print(f"Found {len(urls)} URLs in the input file.")
+        logging.info(f"Found {len(urls)} URLs in the input file.")
     elif all_urls:
         # Use the generated list of URLs
         print("Using generated list of URLs.")
@@ -621,7 +636,7 @@ def main():
         start_idx = batch_num * BATCH_SIZE
         end_idx = min((batch_num + 1) * BATCH_SIZE, total_urls)
         
-        print("Processing batch {}/{} (URLs {}-{})".format(batch_num+1, num_batches, start_idx+1, end_idx))
+        print(f"Processing batch {batch_num+1}/{num_batches} (URLs {start_idx+1}-{end_idx})")
         
         for i, url in enumerate(urls[start_idx:end_idx]):
             urls_to_process = end_idx - start_idx
@@ -631,33 +646,32 @@ def main():
             if i % 10 == 0 or i == urls_to_process - 1:  # Update every 10 URLs or at the end
                 speed, elapsed, remaining, completion = estimate_progress(start_time, urls_processed, total_urls)
                 
-                print("\n--- PROGRESS UPDATE ---")
-                print("Processing URL {}/{} in current batch ({}/{} total)".format(
-                    current_in_batch, urls_to_process, urls_processed + 1, total_urls))
-                print("Speed: {:.2f} URLs/minute".format(speed))
-                print("Elapsed time: {}".format(elapsed))
-                print("Estimated remaining: {}".format(remaining))
-                print("Estimated completion: {}".format(completion))
+                print(f"\n--- PROGRESS UPDATE ---")
+                print(f"Processing URL {current_in_batch}/{urls_to_process} in current batch ({urls_processed + 1}/{total_urls} total)")
+                print(f"Speed: {speed:.2f} URLs/minute")
+                print(f"Elapsed time: {elapsed}")
+                print(f"Estimated remaining: {remaining}")
+                print(f"Estimated completion: {completion}")
                 print("-----------------------\n")
                 
-            print("Processing URL: {}".format(url))
+            print(f"Processing URL: {url}")
             retries = 0
             success = False
             
             while retries < max_retries and not success:
                 try:
-                    print("Processing URL: {} (Attempt {}/{})".format(url, retries+1, max_retries))
+                    print(f"Processing URL: {url} (Attempt {retries+1}/{max_retries})")
                     context = ssl._create_unverified_context()
-                    response = urllib2.urlopen(url, context=context)  # Bypass SSL verification
-                    page_content = response.read()
+                    response = urllib.request.urlopen(url, context=context)
+                    page_content = response.read().decode('utf-8')
                     success = True
-                except urllib2.URLError as e:
+                except urllib.error.URLError as e:
                     retries += 1
-                    error_msg = "Error fetching URL: {} - {} (Attempt {}/{})".format(url, str(e), retries, max_retries)
+                    error_msg = f"Error fetching URL: {url} - {str(e)} (Attempt {retries}/{max_retries})"
                     print(error_msg)
                     logging.error(error_msg)
                     if retries < max_retries:
-                        print("Retrying in {} seconds...".format(retry_delay))
+                        print(f"Retrying in {retry_delay} seconds...")
                         time.sleep(retry_delay)
                     else:
                         failed_urls.append(url)
@@ -685,9 +699,9 @@ def main():
                     if letter_item and letter_item.get("href"):
                         pdf_url = letter_item.get("href")
                         pdf_name = letter_item.text.strip()
-                        withdrawal_data["Withdrawal Letter"] = "[{}]({})".format(pdf_name, pdf_url)
+                        withdrawal_data["Withdrawal Letter"] = f"[{pdf_name}]({pdf_url})"
             except Exception as e:
-                error_msg = "Error parsing URL: {} - {}".format(url, str(e))
+                error_msg = f"Error parsing URL: {url} - {str(e)}"
                 print(error_msg)
                 logging.error(error_msg)
                 failed_urls.append(url)
@@ -697,7 +711,7 @@ def main():
             main_data = {
                 "link": url,
                 "AG Number": extract_value(soup, "AG Number:"),
-                "Notice PDF": "[{}.pdf](https://oag.ca.gov/prop65/60-Day-Notice-{}/{}.pdf)".format(url.split("/")[-1], url.split("/")[-1], url.split("/")[-1]),
+                "Notice PDF": f"[{url.split('/')[-1]}.pdf](https://oag.ca.gov/prop65/60-Day-Notice-{url.split('/')[-1]}/{url.split('/')[-1]}.pdf)",
                 "Date Filed": extract_value(soup, "Date Filed:"),
                 "Noticing Party": extract_value(soup, "Noticing Party:"),
                 "Plaintiff Attorney": extract_value(soup, "Plaintiff Attorney:"),
@@ -716,7 +730,7 @@ def main():
             if civil_complaint_div:
                 civil_complaint_data = extract_section_data(civil_complaint_div, "Civil Complaint")
                 for key, value in civil_complaint_data.items():
-                    flat_civil_complaint_data["Civil_Complaint_{}".format(key)] = value
+                    flat_civil_complaint_data[f"Civil_Complaint_{key}"] = value
 
             # Properly find and distinguish between Corrected Settlement and Settlement divs
             # First find all settlement-related divs
@@ -731,14 +745,14 @@ def main():
             for i, div in enumerate(corrected_settlement_divs[:5]):  # Change from [:3] to [:5]
                 data = extract_section_data(div, "Settlement")
                 for key, value in data.items():
-                    flat_corrected_settlement_data["Corrected_Settlement_{}_{}".format(i+1, key)] = value or ""
+                    flat_corrected_settlement_data[f"Corrected_Settlement_{i+1}_{key}"] = value or ""
 
             # Update the Settlement Data extraction to handle up to 5 settlements
             flat_settlement_data = {}
             for i, div in enumerate(settlement_divs[:5]):  # Change from [:3] to [:5]
                 data = extract_section_data(div, "Settlement")
                 for key, value in data.items():
-                    flat_settlement_data["Settlement_{}_{}".format(i+1, key)] = value or ""
+                    flat_settlement_data[f"Settlement_{i+1}_{key}"] = value or ""
 
             # Extract Judgment Data
             judgment_divs = soup.find_all("div", text="Judgment")
@@ -746,7 +760,7 @@ def main():
             for i, div in enumerate(judgment_divs[:5]):  # Change from just taking all to limiting to 5
                 data = extract_section_data(div, "Judgment")
                 for key, value in data.items():
-                    flat_judgment_data["Judgment_{}_{}".format(i+1, key)] = value or ""
+                    flat_judgment_data[f"Judgment_{i+1}_{key}"] = value or ""
 
             # Organize data into a dictionary with specific order
             organized_data = {'data': main_data}
@@ -772,31 +786,31 @@ def main():
                 # Update progress after each successful URL
                 if urls_processed % 50 == 0:  # Show full stats every 50 successful URLs
                     speed, elapsed, remaining, completion = estimate_progress(start_time, urls_processed, total_urls)
-                    print("\n=== MILESTONE: {} URLs PROCESSED ===".format(urls_processed))
-                    print("Current speed: {:.2f} URLs/minute".format(speed))
-                    print("Elapsed time: {}".format(elapsed))
-                    print("Estimated remaining: {}".format(remaining))
-                    print("Estimated completion: {}".format(completion))
+                    print(f"\n=== MILESTONE: {urls_processed} URLs PROCESSED ===")
+                    print(f"Current speed: {speed:.2f} URLs/minute")
+                    print(f"Elapsed time: {elapsed}")
+                    print(f"Estimated remaining: {remaining}")
+                    print(f"Estimated completion: {completion}")
                     print("=====================================\n")
 
         # Save intermediate results after each batch
         if batch_num < num_batches - 1:
-            intermediate_filename = "60-Day-Notice-Data_batch{}.xlsx".format(batch_num+1)
+            intermediate_filename = f"60-Day-Notice-Data_batch{batch_num+1}.xlsx"
             workbook.save(intermediate_filename)
-            print("Intermediate results saved to {}".format(intermediate_filename))
+            print(f"Intermediate results saved to {intermediate_filename}")
 
     # Log summary of results
-    logging.info("Scraping completed. Processed {} URLs successfully.".format(len(all_data)))
+    logging.info(f"Scraping completed. Processed {len(all_data)} URLs successfully.")
     
     if failed_urls:
-        logging.warning("Failed to process {} URLs:".format(len(failed_urls)))
+        logging.warning(f"Failed to process {len(failed_urls)} URLs:")
         for failed_url in failed_urls:
-            logging.warning("  - {}".format(failed_url))
+            logging.warning(f"  - {failed_url}")
         
         # Also write failed URLs to a separate file for easy re-processing
-        with open("failed_urls_{}.txt".format(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")), "w") as f:
+        with open(f"failed_urls_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt", "w", encoding='utf-8') as f:
             for url in failed_urls:
-                f.write(url + "\n")
+                f.write(f"{url}\n")
 
     # Now, extract all possible headers from all data
     all_headers_by_category = {}
@@ -822,12 +836,13 @@ def main():
     # Save the Excel file
     output_filename = "60-Day-Notice-Data.xlsx"
     workbook.save(output_filename)
-    print("Data successfully written to {}".format(output_filename))
+    print(f"Data successfully written to {output_filename}")
 
+# Modified estimate_progress to ensure proper time format
 def estimate_progress(start_time, urls_processed, total_urls):
     """
     Estimates scraping speed and time remaining based on progress so far.
-    
+
     Args:
         start_time: Timestamp when scraping started (from time.time())
         urls_processed: Number of URLs successfully processed so far
@@ -862,12 +877,16 @@ def estimate_progress(start_time, urls_processed, total_urls):
         remaining_seconds = float('inf')
         completion_time_str = "Unknown"
     
-    # Format elapsed time as HH:MM:SS
-    elapsed_time_str = str(datetime.timedelta(seconds=int(elapsed_time)))
+    # Format elapsed time as HH:MM:SS with leading zeros
+    hours, remainder = divmod(int(elapsed_time), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    elapsed_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     
-    # Format remaining time as HH:MM:SS
+    # Format remaining time as HH:MM:SS with leading zeros
     if not math.isinf(remaining_seconds):
-        remaining_time_str = str(datetime.timedelta(seconds=int(remaining_seconds)))
+        hours, remainder = divmod(int(remaining_seconds), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        remaining_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     else:
         remaining_time_str = "Unknown"
     

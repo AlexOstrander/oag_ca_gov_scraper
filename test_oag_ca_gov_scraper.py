@@ -5,10 +5,11 @@ import pandas as pd
 import datetime
 import time
 import math
-from mock import patch, Mock, MagicMock
+from unittest.mock import patch, Mock, MagicMock
 from bs4 import BeautifulSoup
 import openpyxl
 import oag_ca_gov_scraper
+from io import StringIO  # Python 3 import
 
 class TestUrlReading(unittest.TestCase):
     """
@@ -290,33 +291,11 @@ class TestDataExtraction(unittest.TestCase):
         """
         self.soup = BeautifulSoup(self.html_content, 'html.parser')
     
-    @patch('oag_ca_gov_scraper.extract_value')
-    def test_extract_value(self, mock_extract_value):
-        """Test the extract_value function using mocks."""
-        mock_extract_value.return_value = "2021-00123"
-        
-        # Call extract_value indirectly through main's extract_value function
-        # Note: Since extract_value is defined inside main(), we're essentially testing
-        # the behavior of main() when it calls extract_value
-        main_extract_value = self.get_extract_value_from_main()
-        result = main_extract_value(self.soup, "AG Number:")
-        
+    def test_extract_value(self):
+        """Test the extract_value functionality directly."""
+        result = oag_ca_gov_scraper.extract_value(self.soup, "AG Number:")
         self.assertEqual(result, "2021-00123")
-        mock_extract_value.assert_called_once_with(self.soup, "AG Number:")
     
-    def get_extract_value_from_main(self):
-        """Helper method to access extract_value from main()."""
-        # This is a workaround to test a function defined inside main()
-        # In a real test, you might want to refactor the code to move extract_value outside main
-        def extract_value(soup, label_text):
-            label = soup.find("div", class_="field-label", string=lambda x: x and label_text in x)
-            if label and label.find_next_sibling():
-                sibling = label.find_next_sibling()
-                if sibling:
-                    return sibling.text.strip()
-            return ""
-        return extract_value
-
 
 class TestSheetWriting(unittest.TestCase):
     """
