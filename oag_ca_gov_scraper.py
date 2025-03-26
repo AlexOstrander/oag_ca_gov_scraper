@@ -6,7 +6,14 @@ import pandas as pd  # Replace xlrd with pandas
 import re
 import sys
 import os
-
+# Add logging functionality
+import logging
+import datetime
+import openpyxl
+from openpyxl.utils import get_column_letter
+import time  # Add this import at the top
+import ssl
+import math  # For isinf() function
 
 def read_urls_from_excel(excel_path, column_index=0, sheet_index=0):
     """
@@ -67,8 +74,277 @@ def read_urls_from_tsv(tsv_path, column_index=0):
         print("Error reading TSV file: {}".format(e))
         return []
 
+
+# Add this helper function to convert monetary values to floats
+def convert_to_float(value_str):
+    """Convert a monetary string (like $1,234.56) to a float (1234.56)"""
+    if value_str is None or value_str == '':
+        return ""
+    
+    try:
+        # Handle values that are already numbers
+        if isinstance(value_str, (int, float)):
+            return float(value_str)
+            
+        # Remove dollar signs, commas, and spaces
+        cleaned_str = str(value_str).replace('$', '').replace(',', '').replace(' ', '')
+        # If there's nothing left, return empty string
+        if not cleaned_str:
+            return ""
+        # Convert to float    
+        return float(cleaned_str)
+    except (ValueError, TypeError):
+        # If conversion fails, return original string
+        return value_str
+
+
+def generate_urls_for_year_range(start_year, end_year, start_ids, end_ids):
+    """
+    Generate a list of all possible URLs for the given year range.
+    
+    Args:
+        start_year: Starting year (e.g., 2015)
+        end_year: Ending year (e.g., 2025)
+        start_ids: Dictionary mapping years to starting IDs
+        end_ids: Dictionary mapping years to ending IDs
+        
+    Returns:
+        List of URLs
+    """
+    urls = []
+    
+    for year in range(start_year, end_year + 1):
+        if year in start_ids and year in end_ids:
+            # Extract the numeric part of the ID and ensure they're integers
+            start_id = int(start_ids[year])
+            end_id = int(end_ids[year])
+            
+            # Format with leading zeros to ensure 5 digits (fixed format)
+            id_format = "{:05d}"  # Always 5 digit format
+            
+            for id_num in range(start_id, end_id + 1):
+                formatted_id = id_format.format(id_num)
+                url = "https://oag.ca.gov/prop65/60-Day-Notice-{}-{}".format(year, formatted_id)
+                urls.append(url)
+    
+    return urls
+
+# Example usage with proper 5-digit formatting:
+start_ids = {
+    2015: 1,      # Will be formatted as 00001
+    2016: 1,      # Will be formatted as 00001
+    2017: 1,
+    2018: 1,
+    2019: 1,
+    2020: 1,
+    2021: 1,
+    2022: 1,
+    2023: 1,
+    2024: 1,
+    2025: 1
+}
+
+end_ids = {
+    2015: 1349,   # Will be formatted as 01349
+    2016: 1581,   # Will be formatted as 01581
+    2017: 2713,   # Will be formatted as 02713
+    2018: 2368,   # Will be formatted as 02368
+    2019: 2423,   # Will be formatted as 02423
+    2020: 3543,   # Will be formatted as 03543
+    2021: 3165,   # Will be formatted as 03165
+    2022: 3174,   # Will be formatted as 03174
+    2023: 4142,   # Will be formatted as 04142
+    2024: 5403,   # Will be formatted as 05403
+    2025: 881     # Will be formatted as 00881
+}
+
+# Generate URLs for the past 10 years
+all_urls = generate_urls_for_year_range(2015, 2025, start_ids, end_ids)
+
+
+# Move this function outside main()
+def write_data_to_sheet_with_all_headers(sheet, all_data, all_headers_by_category):
+    # Define data categories here to ensure they're in scope
+    data_categories = ['data', 'flat_civil_complaint_data', 'flat_settlement_data', 
+                    'flat_judgment_data', 'flat_corrected_settlement_data']
+    
+    # Define the exact column order with withdrawal columns removed
+    ordered_headers = [
+        # Main data
+        'link',
+        'AG Number',
+        'Alleged Violators',
+        'Chemicals',
+        'Date Filed',
+        'Notice PDF',
+        'Noticing Party',
+        'Plaintiff Attorney',
+        'Source',
+        
+        # Only include Withdrawal Status and ID
+        'Withdrawal Status',
+        'Withdrawal ID',
+        'Withdrawal Date',
+        'Withdrawal Letter',
+        
+        # Civil Complaint data
+        'Civil_Complaint_Date Filed',
+        'Civil_Complaint_Case Name',
+        'Civil_Complaint_Court Name',
+        'Civil_Complaint_Court Docket Number',
+        'Civil_Complaint_Plaintiff',
+        'Civil_Complaint_Plaintiff Attorney',
+        'Civil_Complaint_Defendant',
+        'Civil_Complaint_Type of Claim',
+        'Civil_Complaint_Relief Sought',
+        'Civil_Complaint_Contact Name',
+        'Civil_Complaint_Contact Organization',
+        'Civil_Complaint_Email Address',
+        'Civil_Complaint_Address',
+        'Civil_Complaint_City, State, Zip',
+        'Civil_Complaint_Phone Number'
+    ]
+
+    # Add Settlement columns (1-5) instead of just (1-3)
+    for settlement_num in range(1, 6):
+        settlement_fields = [
+            'Settlement_{}_Settlement Date'.format(settlement_num),
+            'Settlement_{}_Case Name'.format(settlement_num),
+            'Settlement_{}_Court Name'.format(settlement_num),
+            'Settlement_{}_Court Docket Number'.format(settlement_num),
+            'Settlement_{}_Plaintiff'.format(settlement_num),
+            'Settlement_{}_Plaintiff Attorney'.format(settlement_num),
+            'Settlement_{}_Defendant'.format(settlement_num),
+            'Settlement_{}_Injunctive Relief'.format(settlement_num),
+            'Settlement_{}_Non-Contingent Civil Penalty'.format(settlement_num),
+            'Settlement_{}_Attorneys Fees and Costs'.format(settlement_num),
+            'Settlement_{}_Payment in Lieu of Penalty'.format(settlement_num),
+            'Settlement_{}_Total Payments'.format(settlement_num),
+            'Settlement_{}_Will settlement be submitted to court?'.format(settlement_num),
+            'Settlement_{}_Contact Name'.format(settlement_num),
+            'Settlement_{}_Contact Organization'.format(settlement_num),
+            'Settlement_{}_Email Address'.format(settlement_num),
+            'Settlement_{}_Address'.format(settlement_num),
+            'Settlement_{}_City, State, Zip'.format(settlement_num),
+            'Settlement_{}_Phone Number'.format(settlement_num)
+        ]
+        ordered_headers.extend(settlement_fields)
+    
+    # Add Corrected Settlement columns (1-5) instead of just (1-3)
+    for settlement_num in range(1, 6):
+        corrected_settlement_fields = [
+            'Corrected_Settlement_{}_Settlement Date'.format(settlement_num),
+            'Corrected_Settlement_{}_Case Name'.format(settlement_num),
+            'Corrected_Settlement_{}_Court Name'.format(settlement_num),
+            'Corrected_Settlement_{}_Court Docket Number'.format(settlement_num),
+            'Corrected_Settlement_{}_Plaintiff'.format(settlement_num),
+            'Corrected_Settlement_{}_Plaintiff Attorney'.format(settlement_num),
+            'Corrected_Settlement_{}_Defendant'.format(settlement_num),
+            'Corrected_Settlement_{}_Injunctive Relief'.format(settlement_num),
+            'Corrected_Settlement_{}_Non-Contingent Civil Penalty'.format(settlement_num),
+            'Corrected_Settlement_{}_Attorneys Fees and Costs'.format(settlement_num),
+            'Corrected_Settlement_{}_Payment in Lieu of Penalty'.format(settlement_num),
+            'Corrected_Settlement_{}_Total Payments'.format(settlement_num),
+            'Corrected_Settlement_{}_Will settlement be submitted to court?'.format(settlement_num),
+            'Corrected_Settlement_{}_Contact Name'.format(settlement_num),
+            'Corrected_Settlement_{}_Contact Organization'.format(settlement_num),
+            'Corrected_Settlement_{}_Email Address'.format(settlement_num),
+            'Corrected_Settlement_{}_Address'.format(settlement_num),
+            'Corrected_Settlement_{}_City, State, Zip'.format(settlement_num),
+            'Corrected_Settlement_{}_Phone Number'.format(settlement_num)
+        ]
+        ordered_headers.extend(corrected_settlement_fields)
+    
+    # Add Judgment columns (1-5) instead of just 1
+    for judgment_num in range(1, 6):
+        judgment_fields = [
+            'Judgment_{}_Judgment Date'.format(judgment_num),
+            'Judgment_{}_Settlement reported to AG'.format(judgment_num),
+            'Judgment_{}_Case Name'.format(judgment_num),
+            'Judgment_{}_Court Name'.format(judgment_num),
+            'Judgment_{}_Court Docket Number'.format(judgment_num),
+            'Judgment_{}_Plaintiff'.format(judgment_num),
+            'Judgment_{}_Plaintiff Attorney'.format(judgment_num),
+            'Judgment_{}_Defendant'.format(judgment_num),
+            'Judgment_{}_Injunctive Relief'.format(judgment_num),
+            'Judgment_{}_Non-Contingent Civil Penalty'.format(judgment_num),
+            'Judgment_{}_Attorneys Fees and Costs'.format(judgment_num),
+            'Judgment_{}_Payment in Lieu of Penalty'.format(judgment_num),
+            'Judgment_{}_Total Payments'.format(judgment_num),
+            'Judgment_{}_Is Judgment Pursuant to Settlement?'.format(judgment_num),
+            'Judgment_{}_Contact Name'.format(judgment_num),
+            'Judgment_{}_Contact Organization'.format(judgment_num),
+            'Judgment_{}_Email Address'.format(judgment_num),
+            'Judgment_{}_Address'.format(judgment_num),
+            'Judgment_{}_City, State, Zip'.format(judgment_num),
+            'Judgment_{}_Phone Number'.format(judgment_num)
+        ]
+        ordered_headers.extend(judgment_fields)
+    
+    # Write headers in the first row - openpyxl uses 1-based indexing
+    for col_idx, header in enumerate(ordered_headers, 1):
+        sheet.cell(row=1, column=col_idx, value=header)
+    
+    # Create a mapping of headers to their column index - openpyxl uses 1-based indexing
+    header_to_column = {header: i for i, header in enumerate(ordered_headers, 1)}
+    
+    # Initialize all empty values to prevent None errors
+    for col_idx, _ in enumerate(ordered_headers, 1):
+        for row_idx in range(2, len(all_data) + 2):
+            sheet.cell(row=row_idx, column=col_idx, value="")
+    
+    # Process each URL's data - openpyxl uses 1-based indexing for rows too
+    row_idx = 2  # Start from row 2 (after headers)
+    
+    def is_monetary_field(header):
+        monetary_keywords = [
+            "civil penalty", 
+            "fees", 
+            "costs",
+            "payment",
+            "penalty",
+            "payments",
+            "total"
+        ]
+        header_lower = header.lower()
+        return any(keyword in header_lower for keyword in monetary_keywords)
+
+    for entry in all_data:
+        # Process all categories of data
+        for category in data_categories:
+            if category in entry:
+                for header, value in entry[category].items():
+                    # Find the column for this header
+                    if header in header_to_column:
+                        # Check if this is a monetary field that should be converted to float
+                        if is_monetary_field(header):
+                            value = convert_to_float(value)
+                        
+                        # Write value to cell - only if not empty
+                        if value:  # Only write non-empty values
+                            sheet.cell(row=row_idx, column=header_to_column[header], value=value)
+        
+        # Handle 'link' value separately to avoid duplication
+        if 'data' in entry and 'link' in entry.get('data', {}):
+            sheet.cell(row=row_idx, column=header_to_column['link'], 
+                    value=entry['data']['link'])
+        
+        # Move to next row
+        row_idx += 1
+
 # Update the main function to handle TSV files
 def main():
+    # Set up logging to file
+    log_filename = "scraper_errors_{}.log".format(datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+    logging.basicConfig(
+        filename=log_filename,
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    # Log start of scraping
+    logging.info("Starting OAG CA Gov scraper")
+    
     # Check if a file is provided as an argument
     if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
         input_file = sys.argv[1]
@@ -76,34 +352,49 @@ def main():
         # Check if it's an Excel file
         if input_file.endswith(('.xls', '.xlsx')):
             print("Reading URLs from Excel file: {}".format(input_file))
+            logging.info("Reading URLs from Excel file: {}".format(input_file))
             urls = read_urls_from_excel(input_file)
             
         # Check if it's a TSV file
         elif input_file.endswith('.tsv') or input_file.endswith('.txt'):
             print("Reading URLs from TSV file: {}".format(input_file))
+            logging.info("Reading URLs from TSV file: {}".format(input_file))
             urls = read_urls_from_tsv(input_file)
             
         else:
-            print("Unsupported file format. Please provide an Excel (.xls, .xlsx) or TSV (.tsv, .txt) file.")
+            error_msg = "Unsupported file format. Please provide an Excel (.xls, .xlsx) or TSV (.tsv, .txt) file."
+            print(error_msg)
+            logging.error(error_msg)
             return
             
         if not urls:
-            print("No valid URLs found in the input file or file could not be read.")
+            error_msg = "No valid URLs found in the input file or file could not be read."
+            print(error_msg)
+            logging.error(error_msg)
             return
             
         print("Found {} URLs in the input file.".format(len(urls)))
+        logging.info("Found {} URLs in the input file.".format(len(urls)))
+    elif all_urls:
+        # Use the generated list of URLs
+        print("Using generated list of URLs.")
+        logging.info("Using generated list of URLs.")
+        urls = all_urls
+        print("Number of URLs: ", len(urls))
     else:
         # Use the hardcoded list of URLs
         print("Using hardcoded list of URLs.")
+        logging.info("Using hardcoded list of URLs.")
         urls = [
             "https://oag.ca.gov/prop65/60-Day-Notice-2021-02146",
             "https://oag.ca.gov/prop65/60-Day-Notice-2021-02145",
-            # Add more URLs here if needed
+            "https://oag.ca.gov/prop65/60-Day-Notice-2021-02147",
+            "https://oag.ca.gov/prop65/60-Day-Notice-2021-02148",
+            "https://oag.ca.gov/prop65/60-Day-Notice-2022-02148"
         ]
 
-    # Create a new Excel workbook and add a sheet
-    workbook = xlwt.Workbook()
-    main_sheet = workbook.add_sheet("Main Data")
+    # Define all_data at the start of main()
+    all_data = []  # Will be populated with scraped data
 
     # Function to safely extract data
     def extract_value(soup, label_text):
@@ -275,162 +566,208 @@ def main():
         mapping = field_mapping.get(section_type, field_mapping["Settlement"])
         
         for field, label in mapping.items():
-            data[field] = extract_value_from_element(div, label)
+            value = extract_value_from_element(div, label)
+            data[field] = value if value is not None else ""
         
         return data
 
     # First, collect all data from all URLs
-    all_data = []
-    for url in urls:
-        try:
-            response = urllib2.urlopen(url)
-            page_content = response.read()
-        except urllib2.URLError as e:
-            print("Error fetching URL: {}".format(url))
-            print("Error details: {}".format(e))
-            continue
+    failed_urls = []  # Track failed URLs
 
-        # Parse the page using BeautifulSoup
-        soup = BeautifulSoup(page_content, "html.parser")
+    # Add retry mechanism for failed URLs
+    max_retries = 3
+    retry_delay = 5  # seconds
 
-            # Check if notice has been withdrawn
-        notice_withdrawn = False
-        withdrawal_data = {}
+    # Process in batches to prevent memory issues
+    BATCH_SIZE = 1000
+    total_urls = len(urls)
+    num_batches = (total_urls + BATCH_SIZE - 1) // BATCH_SIZE
 
-        # Look for the withdrawal banner
-        withdrawal_banner = soup.find("span", class_="label-danger", 
-                                    string=lambda x: x and "THIS 60-DAY NOTICE HAS BEEN WITHDRAWN" in x)
-        if withdrawal_banner:
-            notice_withdrawn = True
-            # Extract additional withdrawal information
-            withdrawal_data["Withdrawal Status"] = "WITHDRAWN"
+    # Track start time for progress estimation
+    start_time = time.time()
+    urls_processed = 0
+    
+    # Process in batches as before
+    for batch_num in range(num_batches):
+        start_idx = batch_num * BATCH_SIZE
+        end_idx = min((batch_num + 1) * BATCH_SIZE, total_urls)
         
-            # Extract Withdrawal ID
-            withdrawal_id_div = soup.find("div", class_="field-label", string=lambda x: x and "Withdrawal ID:" in x)
-            if withdrawal_id_div and withdrawal_id_div.find_next_sibling():
-                withdrawal_data["Withdrawal ID"] = withdrawal_id_div.find_next_sibling().text.strip()
-            
-            # Extract Withdrawal Date
-            withdrawal_date_div = soup.find("div", class_="field-label", string=lambda x: x and "Withdrawal Date:" in x)
-            if withdrawal_date_div and withdrawal_date_div.find_next_sibling():
-                withdrawal_data["Withdrawal Date"] = withdrawal_date_div.find_next_sibling().text.strip()
-            
-            # Extract Withdrawal Letter
-            withdrawal_letter_div = soup.find("div", class_="field-label", string=lambda x: x and "Withdrawal Letter:" in x)
-            if withdrawal_letter_div and withdrawal_letter_div.find_next_sibling():
-                letter_item = withdrawal_letter_div.find_next_sibling().find("a")
-                if letter_item and letter_item.get("href"):
-                    pdf_url = letter_item.get("href")
-                    pdf_name = letter_item.text.strip()
-                    withdrawal_data["Withdrawal Letter"] = "[{}]({})".format(pdf_name, pdf_url)
-
-            # Extract additional contact information
-            # Contact Organization
-            contact_org_div = soup.find("div", class_="field-label", string=lambda x: x and "Contact Organization:" in x)
-            if contact_org_div and contact_org_div.find_next_sibling():
-                withdrawal_data["Withdrawal Contact Organization"] = contact_org_div.find_next_sibling().text.strip()
-            
-            # Address
-            address_div = soup.find("div", class_="field-label", string=lambda x: x and "Address:" in x)
-            if address_div and address_div.find_next_sibling():
-                withdrawal_data["Withdrawal Address"] = address_div.find_next_sibling().text.strip()
-            
-            # City, State, Zip
-            city_div = soup.find("div", class_="field-label", string=lambda x: x and "City, State, Zip:" in x)
-            if city_div and city_div.find_next_sibling():
-                withdrawal_data["Withdrawal City State Zip"] = city_div.find_next_sibling().text.strip()
-            
-            # Contact Name
-            contact_name_div = soup.find("div", class_="field-label", string=lambda x: x and "Contact Name:" in x)
-            if contact_name_div and contact_name_div.find_next_sibling():
-                withdrawal_data["Withdrawal Contact Name"] = contact_name_div.find_next_sibling().text.strip()
-            
-            # Phone Number
-            phone_div = soup.find("div", class_="field-label", string=lambda x: x and "Phone Number:" in x)
-            if phone_div and phone_div.find_next_sibling():
-                withdrawal_data["Withdrawal Phone Number"] = phone_div.find_next_sibling().text.strip()
-            
-            # Email Address
-            email_div = soup.find("div", class_="field-label", string=lambda x: x and "Email Address:" in x)
-            if email_div and email_div.find_next_sibling():
-                withdrawal_data["Withdrawal Email Address"] = email_div.find_next_sibling().text.strip()
-            
-            # Fax Number
-            fax_div = soup.find("div", class_="field-label", string=lambda x: x and "Fax Number:" in x)
-            if fax_div and fax_div.find_next_sibling():
-                withdrawal_data["Withdrawal Fax Number"] = fax_div.find_next_sibling().text.strip()
-
-        # Extract relevant data from the main section
-        main_data = {
-            "link": url,
-            "AG Number": extract_value(soup, "AG Number:"),
-            "Notice PDF": "[{}.pdf](https://oag.ca.gov/prop65/60-Day-Notice-{}/{}.pdf)".format(url.split("/")[-1], url.split("/")[-1], url.split("/")[-1]),
-            "Date Filed": extract_value(soup, "Date Filed:"),
-            "Noticing Party": extract_value(soup, "Noticing Party:"),
-            "Plaintiff Attorney": extract_value(soup, "Plaintiff Attorney:"),
-            "Alleged Violators": extract_value(soup, "Alleged Violators:"),
-            "Chemicals": extract_value(soup, "Chemicals:"),
-            "Source": extract_value(soup, "Source:"),
-        }
-
-        # Add withdrawal information if notice has been withdrawn
-        if notice_withdrawn:
-            main_data.update(withdrawal_data)
-
-        # Extract Civil Complaint Data
-        civil_complaint_div = soup.find("div", text="Civil Complaint")
-        flat_civil_complaint_data = {}
-        if civil_complaint_div:
-            civil_complaint_data = extract_section_data(civil_complaint_div, "Civil Complaint")
-            for key, value in civil_complaint_data.items():
-                flat_civil_complaint_data["Civil_Complaint_{}".format(key)] = value
-
-        # Properly find and distinguish between Corrected Settlement and Settlement divs
-        # First find all settlement-related divs
-        all_settlement_divs = soup.find_all("div", string=lambda s: s and s.strip() in ["Settlement", "Corrected Settlement"])
+        print("Processing batch {}/{} (URLs {}-{})".format(batch_num+1, num_batches, start_idx+1, end_idx))
         
-        # Separate into correct categories
-        corrected_settlement_divs = [div for div in all_settlement_divs if div.string and div.string.strip() == "Corrected Settlement"]
-        settlement_divs = [div for div in all_settlement_divs if div.string and div.string.strip() == "Settlement"]
-        
-        # Corrected Settlement Data
-        flat_corrected_settlement_data = {}
-        for i, div in enumerate(corrected_settlement_divs[:3]):
-            data = extract_section_data(div, "Settlement")
-            for key, value in data.items():
-                flat_corrected_settlement_data["Corrected_Settlement_{}_{}".format(i+1, key)] = value or ""
-
-        # Settlement Data
-        flat_settlement_data = {}
-        for i, div in enumerate(settlement_divs[:3]):
-            data = extract_section_data(div, "Settlement")
-            for key, value in data.items():
-                flat_settlement_data["Settlement_{}_{}".format(i+1, key)] = value or ""
-
-        # Extract Judgment Data
-        judgment_divs = soup.find_all("div", text="Judgment")
-        flat_judgment_data = {}
-        for i, div in enumerate(judgment_divs):
-            data = extract_section_data(div, "Judgment")
-            for key, value in data.items():
-                flat_judgment_data["Judgment_{}_{}".format(i+1, key)] = value or ""
-
-        # Organize data into a dictionary with specific order
-        organized_data = {'data': main_data}
-        
-        if flat_civil_complaint_data:
-            organized_data['flat_civil_complaint_data'] = flat_civil_complaint_data
+        for i, url in enumerate(urls[start_idx:end_idx]):
+            urls_to_process = end_idx - start_idx
+            current_in_batch = i + 1
             
-        if flat_settlement_data:
-            organized_data['flat_settlement_data'] = flat_settlement_data
+            # Calculate progress
+            if i % 10 == 0 or i == urls_to_process - 1:  # Update every 10 URLs or at the end
+                speed, elapsed, remaining, completion = estimate_progress(start_time, urls_processed, total_urls)
+                
+                print("\n--- PROGRESS UPDATE ---")
+                print("Processing URL {}/{} in current batch ({}/{} total)".format(
+                    current_in_batch, urls_to_process, urls_processed + 1, total_urls))
+                print("Speed: {:.2f} URLs/minute".format(speed))
+                print("Elapsed time: {}".format(elapsed))
+                print("Estimated remaining: {}".format(remaining))
+                print("Estimated completion: {}".format(completion))
+                print("-----------------------\n")
+                
+            print("Processing URL: {}".format(url))
+            retries = 0
+            success = False
             
-        if flat_judgment_data:
-            organized_data['flat_judgment_data'] = flat_judgment_data
+            while retries < max_retries and not success:
+                try:
+                    print("Processing URL: {} (Attempt {}/{})".format(url, retries+1, max_retries))
+                    context = ssl._create_unverified_context()
+                    response = urllib2.urlopen(url, context=context)  # Bypass SSL verification
+                    page_content = response.read()
+                    success = True
+                except urllib2.URLError as e:
+                    retries += 1
+                    error_msg = "Error fetching URL: {} - {} (Attempt {}/{})".format(url, str(e), retries, max_retries)
+                    print(error_msg)
+                    logging.error(error_msg)
+                    if retries < max_retries:
+                        print("Retrying in {} seconds...".format(retry_delay))
+                        time.sleep(retry_delay)
+                    else:
+                        failed_urls.append(url)
+                        continue
 
-        if flat_corrected_settlement_data:
-            organized_data['flat_corrected_settlement_data'] = flat_corrected_settlement_data
+            # Parse the page using BeautifulSoup
+            try:
+                soup = BeautifulSoup(page_content, "html.parser")
 
-        all_data.append(organized_data)
+                # Check if notice has been withdrawn
+                notice_withdrawn = False
+                withdrawal_data = {}
+
+                # Look for the withdrawal banner
+                withdrawal_banner = soup.find("span", class_="label-danger", 
+                                            string=lambda x: x and "THIS 60-DAY NOTICE HAS BEEN WITHDRAWN" in x)
+                if withdrawal_banner:
+                    notice_withdrawn = True
+                    # Extract additional withdrawal information
+                
+                # Extract Withdrawal Letter
+                withdrawal_letter_div = soup.find("div", class_="field-label", string=lambda x: x and "Withdrawal Letter:" in x)
+                if withdrawal_letter_div and withdrawal_letter_div.find_next_sibling():
+                    letter_item = withdrawal_letter_div.find_next_sibling().find("a")
+                    if letter_item and letter_item.get("href"):
+                        pdf_url = letter_item.get("href")
+                        pdf_name = letter_item.text.strip()
+                        withdrawal_data["Withdrawal Letter"] = "[{}]({})".format(pdf_name, pdf_url)
+            except Exception as e:
+                error_msg = "Error parsing URL: {} - {}".format(url, str(e))
+                print(error_msg)
+                logging.error(error_msg)
+                failed_urls.append(url)
+                continue
+
+            # Extract relevant data from the main section
+            main_data = {
+                "link": url,
+                "AG Number": extract_value(soup, "AG Number:"),
+                "Notice PDF": "[{}.pdf](https://oag.ca.gov/prop65/60-Day-Notice-{}/{}.pdf)".format(url.split("/")[-1], url.split("/")[-1], url.split("/")[-1]),
+                "Date Filed": extract_value(soup, "Date Filed:"),
+                "Noticing Party": extract_value(soup, "Noticing Party:"),
+                "Plaintiff Attorney": extract_value(soup, "Plaintiff Attorney:"),
+                "Alleged Violators": extract_value(soup, "Alleged Violators:"),
+                "Chemicals": extract_value(soup, "Chemicals:"),
+                "Source": extract_value(soup, "Source:"),
+            }
+
+            # Add withdrawal information if notice has been withdrawn
+            if notice_withdrawn:
+                main_data.update(withdrawal_data)
+
+            # Extract Civil Complaint Data
+            civil_complaint_div = soup.find("div", text="Civil Complaint")
+            flat_civil_complaint_data = {}
+            if civil_complaint_div:
+                civil_complaint_data = extract_section_data(civil_complaint_div, "Civil Complaint")
+                for key, value in civil_complaint_data.items():
+                    flat_civil_complaint_data["Civil_Complaint_{}".format(key)] = value
+
+            # Properly find and distinguish between Corrected Settlement and Settlement divs
+            # First find all settlement-related divs
+            all_settlement_divs = soup.find_all("div", string=lambda s: s and s.strip() in ["Settlement", "Corrected Settlement"])
+            
+            # Separate into correct categories
+            corrected_settlement_divs = [div for div in all_settlement_divs if div.string and div.string.strip() == "Corrected Settlement"]
+            settlement_divs = [div for div in all_settlement_divs if div.string and div.string.strip() == "Settlement"]
+            
+            # Update the Corrected Settlement Data extraction to handle up to 5 settlements
+            flat_corrected_settlement_data = {}
+            for i, div in enumerate(corrected_settlement_divs[:5]):  # Change from [:3] to [:5]
+                data = extract_section_data(div, "Settlement")
+                for key, value in data.items():
+                    flat_corrected_settlement_data["Corrected_Settlement_{}_{}".format(i+1, key)] = value or ""
+
+            # Update the Settlement Data extraction to handle up to 5 settlements
+            flat_settlement_data = {}
+            for i, div in enumerate(settlement_divs[:5]):  # Change from [:3] to [:5]
+                data = extract_section_data(div, "Settlement")
+                for key, value in data.items():
+                    flat_settlement_data["Settlement_{}_{}".format(i+1, key)] = value or ""
+
+            # Extract Judgment Data
+            judgment_divs = soup.find_all("div", text="Judgment")
+            flat_judgment_data = {}
+            for i, div in enumerate(judgment_divs[:5]):  # Change from just taking all to limiting to 5
+                data = extract_section_data(div, "Judgment")
+                for key, value in data.items():
+                    flat_judgment_data["Judgment_{}_{}".format(i+1, key)] = value or ""
+
+            # Organize data into a dictionary with specific order
+            organized_data = {'data': main_data}
+            
+            if flat_civil_complaint_data:
+                organized_data['flat_civil_complaint_data'] = flat_civil_complaint_data
+                
+            if flat_settlement_data:
+                organized_data['flat_settlement_data'] = flat_settlement_data
+                
+            if flat_judgment_data:
+                organized_data['flat_judgment_data'] = flat_judgment_data
+
+            if flat_corrected_settlement_data:
+                organized_data['flat_corrected_settlement_data'] = flat_corrected_settlement_data
+
+            all_data.append(organized_data)
+
+            # Increment counter on successful processing
+            if success:
+                urls_processed += 1
+                
+                # Update progress after each successful URL
+                if urls_processed % 50 == 0:  # Show full stats every 50 successful URLs
+                    speed, elapsed, remaining, completion = estimate_progress(start_time, urls_processed, total_urls)
+                    print("\n=== MILESTONE: {} URLs PROCESSED ===".format(urls_processed))
+                    print("Current speed: {:.2f} URLs/minute".format(speed))
+                    print("Elapsed time: {}".format(elapsed))
+                    print("Estimated remaining: {}".format(remaining))
+                    print("Estimated completion: {}".format(completion))
+                    print("=====================================\n")
+
+        # Save intermediate results after each batch
+        if batch_num < num_batches - 1:
+            intermediate_filename = "60-Day-Notice-Data_batch{}.xlsx".format(batch_num+1)
+            workbook.save(intermediate_filename)
+            print("Intermediate results saved to {}".format(intermediate_filename))
+
+    # Log summary of results
+    logging.info("Scraping completed. Processed {} URLs successfully.".format(len(all_data)))
+    
+    if failed_urls:
+        logging.warning("Failed to process {} URLs:".format(len(failed_urls)))
+        for failed_url in failed_urls:
+            logging.warning("  - {}".format(failed_url))
+        
+        # Also write failed URLs to a separate file for easy re-processing
+        with open("failed_urls_{}.txt".format(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")), "w") as f:
+            for url in failed_urls:
+                f.write(url + "\n")
 
     # Now, extract all possible headers from all data
     all_headers_by_category = {}
@@ -450,167 +787,66 @@ def main():
     if 'link' in all_headers_by_category['data']:
         all_headers_by_category['data'].remove('link')
 
-    def write_data_to_sheet_with_all_headers(sheet, all_data, all_headers_by_category):
-        # Define the exact column order
-        ordered_headers = [
-            # Main data
-            'link',
-            'AG Number',
-            'Alleged Violators',
-            'Chemicals',
-            'Date Filed',
-            'Notice PDF',
-            'Noticing Party',
-            'Plaintiff Attorney',
-            'Source',
-            
-            # Withdrawal data
-            'Withdrawal Address',
-            'Withdrawal City State Zip',
-            'Withdrawal Contact Name',
-            'Withdrawal Contact Organization',
-            'Withdrawal Date',
-            'Withdrawal Email Address',
-            'Withdrawal Fax Number',
-            'Withdrawal ID',
-            'Withdrawal Letter',
-            'Withdrawal Phone Number',
-            'Withdrawal Status',
-            
-            # Civil Complaint data
-            'Civil_Complaint_Date_Filed',
-            'Civil_Complaint_Case Name',
-            'Civil_Complaint_Court Name',
-            'Civil_Complaint_Court Docket Number',
-            'Civil_Complaint_Plaintiff',
-            'Civil_Complaint_Plaintiff Attorney',
-            'Civil_Complaint_Defendant',
-            'Civil_Complaint_Type of Claim',
-            'Civil_Complaint_Relief Sought',
-            'Civil_Complaint_Contact Name',
-            'Civil_Complaint_Contact Organization',
-            'Civil_Complaint_Email Address',
-            'Civil_Complaint_Address',
-            'Civil_Complaint_City, State, Zip',
-            'Civil_Complaint_Phone Number'
-        ]
-
-        # Add Settlement columns (1, 2, 3)
-        for settlement_num in range(1, 4):
-            settlement_fields = [
-                'Settlement_{}_Settlement Date'.format(settlement_num),
-                'Settlement_{}_Case Name'.format(settlement_num),
-                'Settlement_{}_Court Name'.format(settlement_num),
-                'Settlement_{}_Court Docket Number'.format(settlement_num),
-                'Settlement_{}_Plaintiff'.format(settlement_num),
-                'Settlement_{}_Plaintiff Attorney'.format(settlement_num),
-                'Settlement_{}_Defendant'.format(settlement_num),
-                'Settlement_{}_Injunctive Relief'.format(settlement_num),
-                'Settlement_{}_Non-Contingent Civil Penalty'.format(settlement_num),
-                'Settlement_{}_Attorneys Fees and Costs'.format(settlement_num),
-                'Settlement_{}_Payment in Lieu of Penalty'.format(settlement_num),
-                'Settlement_{}_Total Payments'.format(settlement_num),
-                'Settlement_{}_Will settlement be submitted to court?'.format(settlement_num),
-                'Settlement_{}_Contact Name'.format(settlement_num),
-                'Settlement_{}_Contact Organization'.format(settlement_num),
-                'Settlement_{}_Email Address'.format(settlement_num),
-                'Settlement_{}_Address'.format(settlement_num),
-                'Settlement_{}_Phone Number'.format(settlement_num),
-                'Settlement_{}_City, State, Zip'.format(settlement_num)
-            ]
-            ordered_headers.extend(settlement_fields)
-        
-        # Add Corrected Settlement columns (1, 2, 3)
-        for settlement_num in range(1, 4):
-            corrected_settlement_fields = [
-                'Corrected_Settlement_{}_Settlement Date'.format(settlement_num),
-                'Corrected_Settlement_{}_Case Name'.format(settlement_num),
-                'Corrected_Settlement_{}_Court Name'.format(settlement_num),
-                'Corrected_Settlement_{}_Court Docket Number'.format(settlement_num),
-                'Corrected_Settlement_{}_Plaintiff'.format(settlement_num),
-                'Corrected_Settlement_{}_Plaintiff Attorney'.format(settlement_num),
-                'Corrected_Settlement_{}_Defendant'.format(settlement_num),
-                'Corrected_Settlement_{}_Injunctive Relief'.format(settlement_num),
-                'Corrected_Settlement_{}_Non-Contingent Civil Penalty'.format(settlement_num),
-                'Corrected_Settlement_{}_Attorneys Fees and Costs'.format(settlement_num),
-                'Corrected_Settlement_{}_Payment in Lieu of Penalty'.format(settlement_num),
-                'Corrected_Settlement_{}_Total Payments'.format(settlement_num),
-                'Corrected_Settlement_{}_Will settlement be submitted to court?'.format(settlement_num),
-                'Corrected_Settlement_{}_Contact Name'.format(settlement_num),
-                'Corrected_Settlement_{}_Contact Organization'.format(settlement_num),
-                'Corrected_Settlement_{}_Email Address'.format(settlement_num),
-                'Corrected_Settlement_{}_Address'.format(settlement_num),
-                'Corrected_Settlement_{}_Phone Number'.format(settlement_num),
-                'Corrected_Settlement_{}_City, State, Zip'.format(settlement_num)
-            ]
-            ordered_headers.extend(corrected_settlement_fields)
-        
-        # Add Judgment columns
-        judgment_fields = [
-            'Judgment_1_Judgment Date',
-            'Judgment_1_Settlement reported to AG',
-            'Judgment_1_Case Name',
-            'Judgment_1_Court Name',
-            'Judgment_1_Court Docket Number',
-            'Judgment_1_Plaintiff',
-            'Judgment_1_Plaintiff Attorney',
-            'Judgment_1_Defendant',
-            'Judgment_1_Injunctive Relief',
-            'Judgment_1_Non-Contingent Civil Penalty',
-            'Judgment_1_Attorneys Fees and Costs',
-            'Judgment_1_Payment in Lieu of Penalty',
-            'Judgment_1_Total Payments',
-            'Judgment_1_Is Judgment Pursuant to Settlement?',
-            'Judgment_1_Contact Name',
-            'Judgment_1_Contact Organization',
-            'Judgment_1_Email Address',
-            'Judgment_1_Address',
-            'Judgment_1_City, State, Zip',
-            'Judgment_1_Phone Number'
-        ]
-        ordered_headers.extend(judgment_fields)
-        
-        # Write headers in the first row
-        for col, header in enumerate(ordered_headers):
-            sheet.write(0, col, header)
-        
-        # Create a mapping of headers to their column index
-        header_to_column = {header: i for i, header in enumerate(ordered_headers)}
-        
-        # Prepare a data matrix to hold all values before writing to the sheet
-        data_matrix = []
-        
-        # Process each URL's data
-        for entry in all_data:
-            # Create a row with empty values for each column
-            row_data = [""] * len(ordered_headers)
-            
-            # Process all categories of data
-            for category in data_categories:
-                if category in entry:
-                    for header, value in entry[category].items():
-                        if header in header_to_column:
-                            row_data[header_to_column[header]] = value
-            
-            # Handle 'link' value separately to avoid duplication
-            if 'data' in entry and 'link' in entry['data']:
-                row_data[header_to_column['link']] = entry['data']['link']
-            
-            data_matrix.append(row_data)
-        
-        # Write all data to the sheet
-        for row_idx, row_data in enumerate(data_matrix, 1):
-            for col_idx, value in enumerate(row_data):
-                if value:  # Only write non-empty values
-                    sheet.write(row_idx, col_idx, value)
-
+    # Create a new Excel workbook and add a sheet using openpyxl instead of xlwt
+    workbook = openpyxl.Workbook()
+    main_sheet = workbook.active
+    main_sheet.title = "Main Data"
     # Write all data to sheet
     write_data_to_sheet_with_all_headers(main_sheet, all_data, all_headers_by_category)
 
     # Save the Excel file
-    output_filename = "60-Day-Notice-Data.xls"
+    output_filename = "60-Day-Notice-Data.xlsx"
     workbook.save(output_filename)
     print("Data successfully written to {}".format(output_filename))
+
+def estimate_progress(start_time, urls_processed, total_urls):
+    """
+    Estimates scraping speed and time remaining based on progress so far.
+    
+    Args:
+        start_time: Timestamp when scraping started (from time.time())
+        urls_processed: Number of URLs successfully processed so far
+        total_urls: Total number of URLs to process
+    
+    Returns:
+        Tuple containing:
+        - speed: URLs processed per minute
+        - elapsed_time_str: Formatted string of elapsed time (HH:MM:SS)
+        - remaining_time_str: Formatted string of estimated remaining time (HH:MM:SS)
+        - completion_time_str: Formatted string of estimated completion time (HH:MM)
+    """
+    current_time = time.time()
+    elapsed_time = current_time - start_time
+    
+    # Avoid division by zero
+    if urls_processed == 0:
+        return 0, "00:00:00", "Unknown", "Unknown"
+    
+    # Calculate speed (URLs per minute)
+    speed = (urls_processed / elapsed_time) * 60
+    
+    # Calculate remaining time
+    if speed > 0:
+        remaining_urls = total_urls - urls_processed
+        remaining_seconds = (remaining_urls / speed) * 60
+        
+        # Calculate estimated completion time
+        completion_time = current_time + remaining_seconds
+        completion_time_str = datetime.datetime.fromtimestamp(completion_time).strftime("%H:%M on %Y-%m-%d")
+    else:
+        remaining_seconds = float('inf')
+        completion_time_str = "Unknown"
+    
+    # Format elapsed time as HH:MM:SS
+    elapsed_time_str = str(datetime.timedelta(seconds=int(elapsed_time)))
+    
+    # Format remaining time as HH:MM:SS
+    if not math.isinf(remaining_seconds):
+        remaining_time_str = str(datetime.timedelta(seconds=int(remaining_seconds)))
+    else:
+        remaining_time_str = "Unknown"
+    
+    return speed, elapsed_time_str, remaining_time_str, completion_time_str
 
 if __name__ == "__main__":
     main()
